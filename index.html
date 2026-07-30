@@ -271,9 +271,10 @@
             },
 
             submitSurvey() {
+                if (state.finished) return;   // chống gửi trùng (double-tap ở câu cuối → 2 lead giống nhau)
+                state.finished = true;
                 const result = this.calculateResults();
                 state.lastResult = result;
-                state.finished = true;
                 try {
                     const arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]');
                     arr.unshift(result);
