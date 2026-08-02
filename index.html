@@ -52,6 +52,8 @@
             { group: "Khác", items: ["Quản lý Dự án (Project Manager)", "Khác"] }
         ];
 
+        const PIC_LIST = ["Kim Kiều","Khanh Trần","Khánh Linh Nguyễn","Thảo Nguyên","Trinh Vũ","Thanh Bình Nguyễn","Sơ Thảo","Tuyển Đào"];
+
         // Câu 1 = bộ chọn sản phẩm (định tuyến, KHÔNG tính điểm).
         // requiresProduct: câu quy mô chỉ hiện & tính điểm khi sản phẩm tương ứng được chọn.
         // Câu không có requiresProduct/gate/router = câu CHUNG, luôn tính cho mọi lead.
@@ -176,18 +178,28 @@
 
             handleInfoSubmit(e) {
                 e.preventDefault();
+                var picSelVal = document.getElementById('f_pic').value;
+                var picFinal = picSelVal === '__other__' ? (document.getElementById('f_pic_other').value || '') : picSelVal;
                 state.formData = {
                     name: document.getElementById('f_name').value,
                     company: document.getElementById('f_company').value,
                     phone: document.getElementById('f_phone').value,
                     email: document.getElementById('f_email').value,
                     jobTitle: document.getElementById('f_job').value,
-                    pic: document.getElementById('f_pic').value,
+                    pic: picFinal,
                     consulted1v1: document.getElementById('f_consult').checked,
                     bookedMeeting: document.getElementById('f_meeting').checked
                 };
                 state.surveyStep = 1;
                 this.render();
+            },
+
+            togglePicOther() {
+                var sel = document.getElementById('f_pic');
+                var other = document.getElementById('f_pic_other');
+                if (!sel || !other) return;
+                if (sel.value === '__other__') { other.classList.remove('hidden'); other.focus(); }
+                else { other.classList.add('hidden'); }
             },
 
             handleAnswer(questionId, optionIndex, isMulti) {
@@ -303,6 +315,9 @@
 
             getInfoHTML() {
                 const jobsOptions = JOB_TITLES.map(g => `<optgroup label="${g.group}">` + g.items.map(j => `<option value="${j}" ${state.formData.jobTitle === j ? 'selected' : ''}>${j}</option>`).join('') + `</optgroup>`).join('');
+                const picVal = state.formData.pic || '';
+                const picIsOther = picVal !== '' && PIC_LIST.indexOf(picVal) === -1;
+                const picOptions = PIC_LIST.map(n => `<option ${picVal === n ? 'selected' : ''}>${n}</option>`).join('');
                 return `
                 <div class="flex-grow overflow-y-auto bg-gray-50"><div class="min-h-full flex items-center justify-center p-4">
                     <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 md:p-10 border-t-8 border-primary my-auto">
@@ -325,7 +340,12 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-semibold mb-1 text-text">Người phụ trách (PIC)</label>
-                                <input type="text" id="f_pic" value="${state.formData.pic || ''}" placeholder="Tên nhân viên phụ trách lead này" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" />
+                                <select id="f_pic" onchange="app.togglePicOther()" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition">
+                                    <option value="">-- Chọn người phụ trách --</option>
+                                    ${picOptions}
+                                    <option value="__other__" ${picIsOther ? 'selected' : ''}>Khác (nhập tay)</option>
+                                </select>
+                                <input type="text" id="f_pic_other" value="${picIsOther ? picVal : ''}" placeholder="Nhập tên người phụ trách" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition mt-2 ${picIsOther ? '' : 'hidden'}" />
                             </div>
                             <div class="bg-bg-box border border-blue-100 rounded-xl p-4">
                                 <p class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Ghi nhận tương tác tại sự kiện (không tính điểm)</p>
