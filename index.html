@@ -138,7 +138,7 @@
 
         const state = {
             surveyStep: 0,
-            formData: { name: '', company: '', phone: '', email: '', jobTitle: '', consulted1v1: false, bookedMeeting: false },
+            formData: { name: '', company: '', phone: '', email: '', jobTitle: '', pic: '', consulted1v1: false, bookedMeeting: false },
             answers: {},
             finished: false,
             lastResult: null
@@ -153,8 +153,8 @@
             exportBackup() {
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào lưu trên máy này.'); return; }
-                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại"];
-                var rows = arr.map(function (r) { var c = r.customer || {}, s = r.scores || {}; return [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||""]; });
+                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"];
+                var rows = arr.map(function (r) { var c = r.customer || {}, s = r.scores || {}; return [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""]; });
                 var csv = [head].concat(rows).map(function (row) { return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(","); }).join("\r\n");
                 var blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
                 var url = URL.createObjectURL(blob);
@@ -182,6 +182,7 @@
                     phone: document.getElementById('f_phone').value,
                     email: document.getElementById('f_email').value,
                     jobTitle: document.getElementById('f_job').value,
+                    pic: document.getElementById('f_pic').value,
                     consulted1v1: document.getElementById('f_consult').checked,
                     bookedMeeting: document.getElementById('f_meeting').checked
                 };
@@ -322,6 +323,10 @@
                                     ${jobsOptions}
                                 </select>
                             </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-1 text-text">Người phụ trách (PIC)</label>
+                                <input type="text" id="f_pic" value="${state.formData.pic || ''}" placeholder="Tên nhân viên phụ trách lead này" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" />
+                            </div>
                             <div class="bg-bg-box border border-blue-100 rounded-xl p-4">
                                 <p class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Ghi nhận tương tác tại sự kiện (không tính điểm)</p>
                                 <label class="flex items-center gap-3 mb-2 cursor-pointer"><input type="checkbox" id="f_consult" ${state.formData.consulted1v1 ? 'checked' : ''} class="w-5 h-5 rounded accent-primary" /><span class="text-[15px] text-gray-700">Đã tư vấn 1:1 tại sự kiện</span></label>
@@ -378,7 +383,7 @@
                     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 md:p-10 relative overflow-hidden my-auto text-center">
                         <div class="absolute top-0 left-0 w-full h-2 bg-highlight"></div>
                         <div class="flex items-center justify-center gap-1.5 text-green-600 text-sm font-semibold mb-4"><i data-lucide="check" class="w-4 h-4"></i> Đã lưu lead</div>
-                        <div class="mb-5"><div class="text-xl font-bold text-gray-800">${r.customer.name || 'Khách hàng'}</div>${r.customer.company ? `<div class="text-sm text-gray-500 mt-0.5">${r.customer.company}</div>` : ''}</div>
+                        <div class="mb-5"><div class="text-xl font-bold text-gray-800">${r.customer.name || 'Khách hàng'}</div>${r.customer.company ? `<div class="text-sm text-gray-500 mt-0.5">${r.customer.company}</div>` : ''}${r.customer.pic ? `<div class="text-xs text-gray-400 mt-1">PIC: ${r.customer.pic}</div>` : ''}</div>
                         <div class="flex justify-center mb-4">
                             <div class="px-8 py-4 rounded-2xl ${c.color} text-white shadow-lg"><div class="text-3xl font-black tracking-tight">${c.emoji} ${c.label}</div></div>
                         </div>
