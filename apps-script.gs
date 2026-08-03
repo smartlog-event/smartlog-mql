@@ -27,6 +27,8 @@ var GLOBAL_HEADERS = ["Timestamp","Full name","Email","Phone","Company","Country
 function doPost(e){
   try{
     var data = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    // Bấm Run doPost trong editor → e rỗng → trước đây sinh 1 dòng trống ở tab Global. Chặn lại.
+    if (!Object.keys(data).length) return reply({ status:"ignored", msg:"Payload rong - khong ghi gi." });
     if (data.customer !== undefined || data.scores !== undefined || data.classification !== undefined) {
       return upsertMQL_(data);
     }
