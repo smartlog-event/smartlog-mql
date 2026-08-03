@@ -164,6 +164,22 @@
             getBackupCount() {
                 try { return JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]').length; } catch (e) { return 0; }
             },
+            // Trình duyệt trong app (Zalo, Messenger...) hoặc chế độ ẩn danh có thể chặn localStorage.
+            storageWorks() {
+                try { localStorage.setItem('__probe__', '1'); localStorage.removeItem('__probe__'); return true; } catch (e) { return false; }
+            },
+            // Luôn hiện trạng thái backup: có lead / trống / bị chặn — để biết vì sao không thấy nút đẩy.
+            getBackupBoxHTML() {
+                var n = this.getBackupCount();
+                var where = 'Bộ nhớ của: ' + (location.hostname || 'file') + ' · ' + (/Zalo/i.test(navigator.userAgent) ? 'trình duyệt trong Zalo' : 'trình duyệt này');
+                if (n > 0) {
+                    return `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6"><p class="text-sm text-amber-900 mb-2">📦 Máy này đang lưu <strong>${n}</strong> lead (bản backup trong máy). Nếu Sheet chưa nhận đủ, bấm để khôi phục:</p><div class="flex gap-2 flex-wrap"><button type="button" onclick="app.exportBackup()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold">⬇ Tải CSV (kèm câu trả lời)</button><button type="button" onclick="app.resyncBackup()" class="px-4 py-2 btn-primary rounded-lg text-sm font-bold">↑ Đẩy lại lên Sheet</button></div><p class="text-[11px] text-amber-700 mt-2">${where}</p></div>`;
+                }
+                if (!this.storageWorks()) {
+                    return `<div class="bg-red-50 border border-red-300 rounded-xl p-4 mb-6"><p class="text-sm text-red-900">⚠️ Trình duyệt này <strong>không lưu được backup</strong> (ẩn danh, hoặc trình duyệt trong app như Zalo/Messenger chặn bộ nhớ). Lead vẫn gửi lên Sheet, nhưng nếu mạng lỗi lúc gửi là mất hẳn. Nên mở link bằng <strong>Safari/Chrome</strong> rồi hãy nhập.</p><p class="text-[11px] text-red-700 mt-2">${where}</p></div>`;
+                }
+                return `<div class="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6"><p class="text-sm text-gray-600">📦 Đang lưu <strong>0</strong> lead. Nếu bạn đã nhập lead ở đây mà vẫn thấy 0: mỗi trình duyệt/app có bộ nhớ <strong>riêng</strong> (Zalo tính là một app riêng, khác Safari/Chrome) — hãy mở lại đúng link trong <strong>đúng app đã dùng lúc nhập</strong>. Nếu vẫn 0 thì bộ nhớ đó đã bị xoá.</p><p class="text-[11px] text-gray-400 mt-2">${where}</p></div>`;
+            },
             exportBackup() {
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào lưu trên máy này.'); return; }
@@ -349,7 +365,7 @@
                     <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 md:p-10 border-t-8 border-primary my-auto">
                         <h1 class="text-[26px] md:text-[32px] font-bold text-primary mb-2 leading-tight">Phân loại Lead tại sự kiện</h1>
                         <p class="text-[17px] text-gray-600 mb-6">Nhập thông tin khách hàng sau khi tư vấn để hệ thống phân loại <strong>Raw / MQL / SQL</strong>. <span class="text-gray-500">Các trường không bắt buộc — lấy được thông tin nào điền thông tin đó.</span></p>
-                        ${this.getBackupCount() > 0 ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6"><p class="text-sm text-amber-900 mb-2">📦 Máy này đang lưu <strong>${this.getBackupCount()}</strong> lead (bản backup trong máy). Nếu Sheet chưa nhận đủ, bấm để khôi phục:</p><div class="flex gap-2 flex-wrap"><button type="button" onclick="app.exportBackup()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold">⬇ Tải CSV (kèm câu trả lời)</button><button type="button" onclick="app.resyncBackup()" class="px-4 py-2 btn-primary rounded-lg text-sm font-bold">↑ Đẩy lại lên Sheet</button></div></div>` : ''}
+                        ${this.getBackupBoxHTML()}
                         <form onsubmit="app.handleInfoSubmit(event)" class="space-y-5">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div><label class="block text-sm font-semibold mb-1 text-text">Họ và Tên</label><input type="text" id="f_name" value="${state.formData.name}" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" /></div>
