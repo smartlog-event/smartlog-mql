@@ -52,6 +52,8 @@
             { group: "Khác", items: ["Quản lý Dự án (Project Manager)", "Khác"] }
         ];
 
+        // Đổi mỗi lần sửa logic gửi lead. Hiện trên trang để CBD biết mình có đang mở bản cũ bị cache không.
+        const BUILD = "2026-08-03b";
         const PIC_LIST = ["Kim Kiều","Khanh Trần","Khánh Linh Nguyễn","Thảo Nguyên","Trinh Vũ","Thanh Bình Nguyễn","Sơ Thảo","Tuyển Đào"];
 
         // Câu 1 = bộ chọn sản phẩm (định tuyến, KHÔNG tính điểm).
@@ -171,7 +173,7 @@
             // Luôn hiện trạng thái backup: có lead / trống / bị chặn — để biết vì sao không thấy nút đẩy.
             getBackupBoxHTML() {
                 var n = this.getBackupCount();
-                var where = 'Bộ nhớ của: ' + (location.hostname || 'file') + ' · ' + (/Zalo/i.test(navigator.userAgent) ? 'trình duyệt trong Zalo' : 'trình duyệt này');
+                var where = 'Bản ' + BUILD + ' · gửi kèm câu trả lời ✓ · bộ nhớ của: ' + (location.hostname || 'file') + ' · ' + (/Zalo/i.test(navigator.userAgent) ? 'trình duyệt trong Zalo' : 'trình duyệt này');
                 if (n > 0) {
                     return `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6"><p class="text-sm text-amber-900 mb-2">📦 Máy này đang lưu <strong>${n}</strong> lead (bản backup trong máy). Nếu Sheet chưa nhận đủ, bấm để khôi phục:</p><div class="flex gap-2 flex-wrap"><button type="button" onclick="app.exportBackup()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold">⬇ Tải CSV (kèm câu trả lời)</button><button type="button" onclick="app.resyncBackup()" class="px-4 py-2 btn-primary rounded-lg text-sm font-bold">↑ Đẩy lại lên Sheet</button></div><p class="text-[11px] text-amber-700 mt-2">${where}</p></div>`;
                 }
