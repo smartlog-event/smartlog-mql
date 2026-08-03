@@ -138,6 +138,18 @@
             return QUESTIONS.filter(q => q.requiresProduct ? sel.includes(q.requiresProduct) : true);
         }
 
+        // Đổi đáp án (index hoặc mảng index) sang chữ. Rỗng = câu không áp dụng/chưa trả lời.
+        function answerToText(q, v) {
+            var idxs = (v === undefined || v === null || v === '') ? [] : (Array.isArray(v) ? v : [v]);
+            return idxs.map(function (i) { return (q.options[i] || {}).text || ('index ' + i); }).join(' | ');
+        }
+        // Toàn bộ câu trả lời dạng chữ, key = id câu (gửi kèm webhook để Sheet lưu được câu trả lời thô)
+        function answersAsText(answers) {
+            var out = {};
+            QUESTIONS.forEach(function (q) { out[q.id] = answerToText(q, answers[q.id]); });
+            return out;
+        }
+
         const state = {
             surveyStep: 0,
             formData: { name: '', company: '', phone: '', email: '', jobTitle: '', pic: '', consulted1v1: false, bookedMeeting: false },
@@ -155,8 +167,16 @@
             exportBackup() {
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào lưu trên máy này.'); return; }
-                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"];
-                var rows = arr.map(function (r) { var c = r.customer || {}, s = r.scores || {}; return [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""]; });
+                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"]
+                    .concat(QUESTIONS.map(function (q) { return "Câu " + q.id + ": " + q.text; }))
+                    .concat(["rawAnswers (JSON gốc)"]);
+                var rows = arr.map(function (r) {
+                    var c = r.customer || {}, s = r.scores || {}, ra = r.rawAnswers || {};
+                    var row = [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""];
+                    QUESTIONS.forEach(function (q) { row.push(answerToText(q, ra[q.id])); });
+                    row.push(JSON.stringify(ra));
+                    return row;
+                });
                 var csv = [head].concat(rows).map(function (row) { return row.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(","); }).join("\r\n");
                 var blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
                 var url = URL.createObjectURL(blob);
@@ -167,7 +187,12 @@
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào để đẩy.'); return; }
                 if (!WEBHOOK_URL) { alert('Chưa cấu hình WEBHOOK_URL.'); return; }
-                if (!confirm('Đẩy lại ' + arr.length + ' lead lên Sheet?')) return;
+                if (!confirm('Đẩy lại ' + arr.length + ' lead lên Sheet?\n(Lead đã có sẽ được BỔ SUNG câu trả lời, không tạo dòng trùng.)')) return;
+                // Lead lưu trước 03/08 chưa có answersText → giải mã từ rawAnswers để Sheet nhận được câu trả lời.
+                arr = arr.map(function (r) {
+                    if (r && !r.answersText && r.rawAnswers) r.answersText = answersAsText(r.rawAnswers);
+                    return r;
+                });
                 var n = 0;
                 (function send(i) {
                     if (i >= arr.length) { alert('Đã gửi lại ' + n + ' lead. Mở Sheet kiểm tra nhé.'); return; }
@@ -274,6 +299,7 @@
                     date: new Date().toISOString(),
                     customer: state.formData,
                     rawAnswers: state.answers,
+                    answersText: answersAsText(state.answers),
                     products: productTags,
                     scores: { earned: earned, max: maxApplicable, percent: percent },
                     tags: tags,
@@ -323,7 +349,7 @@
                     <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-6 md:p-10 border-t-8 border-primary my-auto">
                         <h1 class="text-[26px] md:text-[32px] font-bold text-primary mb-2 leading-tight">Phân loại Lead tại sự kiện</h1>
                         <p class="text-[17px] text-gray-600 mb-6">Nhập thông tin khách hàng sau khi tư vấn để hệ thống phân loại <strong>Raw / MQL / SQL</strong>. <span class="text-gray-500">Các trường không bắt buộc — lấy được thông tin nào điền thông tin đó.</span></p>
-                        ${this.getBackupCount() > 0 ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6"><p class="text-sm text-amber-900 mb-2">📦 Máy này đang lưu <strong>${this.getBackupCount()}</strong> lead (bản backup trong máy). Nếu Sheet chưa nhận đủ, bấm để khôi phục:</p><div class="flex gap-2 flex-wrap"><button type="button" onclick="app.exportBackup()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold">⬇ Tải file CSV</button><button type="button" onclick="app.resyncBackup()" class="px-4 py-2 btn-primary rounded-lg text-sm font-bold">↑ Đẩy lại lên Sheet</button></div></div>` : ''}
+                        ${this.getBackupCount() > 0 ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6"><p class="text-sm text-amber-900 mb-2">📦 Máy này đang lưu <strong>${this.getBackupCount()}</strong> lead (bản backup trong máy). Nếu Sheet chưa nhận đủ, bấm để khôi phục:</p><div class="flex gap-2 flex-wrap"><button type="button" onclick="app.exportBackup()" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold">⬇ Tải CSV (kèm câu trả lời)</button><button type="button" onclick="app.resyncBackup()" class="px-4 py-2 btn-primary rounded-lg text-sm font-bold">↑ Đẩy lại lên Sheet</button></div></div>` : ''}
                         <form onsubmit="app.handleInfoSubmit(event)" class="space-y-5">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div><label class="block text-sm font-semibold mb-1 text-text">Họ và Tên</label><input type="text" id="f_name" value="${state.formData.name}" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" /></div>
@@ -424,52 +450,12 @@
 
     <!--
     =====================================================================
-     HƯỚNG DẪN LƯU DỮ LIỆU VỀ GOOGLE SHEET
+     WEBHOOK GOOGLE SHEET
     =====================================================================
-     1. Tạo Google Sheet mới (KHÔNG cần gõ tiêu đề — hàm setup() sẽ tự tạo).
-     2. Extensions > Apps Script, dán TOÀN BỘ code dưới đây, Save.
-     3. Chọn hàm "setup" trên thanh công cụ > bấm Run (cấp quyền nếu được hỏi)
-        -> hàng tiêu đề được tạo tự động.
-     4. Deploy > New deployment > Web app: Execute as: Me | Who has access: Anyone.
-        Copy URL, dán vào biến WEBHOOK_URL ở đầu file HTML này.
-     ---------------------------------------------------------------------
-     var HEADERS = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ",
-       "Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại"];
-
-     // Chạy 1 lần để tạo hàng tiêu đề (đậm, nền xanh, ghim dòng 1)
-     function setup() {
-       writeHeaders_(SpreadsheetApp.getActiveSpreadsheet().getActiveSheet());
-       SpreadsheetApp.getActiveSpreadsheet().toast("Đã tạo hàng tiêu đề!", "Setup xong", 5);
-     }
-
-     function writeHeaders_(sheet) {
-       sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
-            .setFontWeight("bold").setBackground("#2933D9").setFontColor("#FFFFFF");
-       sheet.setFrozenRows(1);
-     }
-
-     function doPost(e) {
-       try {
-         var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-         if (sheet.getLastRow() === 0) writeHeaders_(sheet); // tự tạo tiêu đề nếu sheet trống
-         var data = JSON.parse(e.postData.contents);
-         var c = data.customer || {};
-         var s = data.scores || {};
-         sheet.appendRow([
-           data.date || new Date().toISOString(),
-           c.name || "", c.company || "", c.phone || "", c.email || "", c.jobTitle || "",
-           c.consulted1v1 ? "x" : "", c.bookedMeeting ? "x" : "",
-           (s.percent != null ? s.percent : 0) + "%",
-           data.products ? data.products.join(", ") : "",
-           data.fit || "",
-           data.tags ? data.tags.join(", ") : "",
-           data.classification || ""        // <-- CỘT CUỐI: Raw / MQL / SQL
-         ]);
-         return ContentService.createTextOutput(JSON.stringify({status:"success"})).setMimeType(ContentService.MimeType.JSON);
-       } catch (err) {
-         return ContentService.createTextOutput(JSON.stringify({status:"error", message: err.toString()})).setMimeType(ContentService.MimeType.JSON);
-       }
-     }
+     Code Apps Script đang chạy nằm ở file apps-script.gs trong repo này
+     (1 doPost duy nhất, tự định tuyến MQL / Global). Sửa ở đó, dán vào
+     Apps Script, rồi Deploy > Manage deployments > Edit > New version
+     để giữ nguyên URL trong biến WEBHOOK_URL ở đầu file này.
     =====================================================================
     -->
 </body>
