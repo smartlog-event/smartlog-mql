@@ -53,7 +53,7 @@
         ];
 
         // Đổi mỗi lần sửa logic gửi lead. Hiện trên trang để CBD biết mình có đang mở bản cũ bị cache không.
-        const BUILD = "2026-08-19a";
+        const BUILD = "2026-08-19b";
         const PIC_LIST = ["Kim Kiều","Khanh Trần","Khánh Linh Nguyễn","Thảo Nguyên","Trinh Vũ","Thanh Bình Nguyễn","Sơ Thảo","Tuyển Đào"];
 
         // ===== SCORING ENGINE V2 (pure, no DOM) =====
@@ -234,6 +234,143 @@
         }
         // ===== END SCORING ENGINE V2 =====
 
+        // ===== QUÉT NAME CARD (QR vCard + OCR Tesseract, không dùng AI) =====
+        // Tách field từ text OCR. Email/SĐT bắt bằng regex; công ty/chức vụ theo từ khóa; dòng chữ 2-6 từ còn lại → họ tên.
+        var CARD_TITLE_RX = /(giám đốc|phó giám đốc|tổng giám đốc|trưởng phòng|phó phòng|trưởng bộ phận|trưởng nhóm|chuyên viên|nhân viên|kế toán|quản lý|giám sát|điều hành|cố vấn|chủ tịch|phụ trách|director|manager|supervisor|executive|specialist|officer|head of|team lead|leader|founder|co-founder|ceo|cfo|coo|cto|president|chairman|sales|account|business development|purchasing|procurement|supply chain)/i;
+        var CARD_CO_STRONG_RX = /(công ty|cong ty|cty|c\.ty|tnhh|cổ phần|co phan|jsc|co\.?,? ?ltd|corporation|corp\.?|group|holdings?|inc\.?|joint stock|một thành viên|mtv)\b/i;
+        var CARD_CO_WEAK_RX = /(company|enterprise|logistics|forwarding|shipping|transport|trading|express|cargo|freight|post|supply chain|distribution)\b/i;
+        var CARD_ADDR_RX = /(đường|duong|phường|quận|q\.\d|p\.\d|tp\.|tphcm|hà nội|ha noi|hcmc|district|street|tầng|tang \d|tòa nhà|khu công nghiệp|kcn|lô |số \d+|add(ress)?:|đ\/c|vpgd)/i;
+        var CARD_WEB_RX = /(www\.|https?:\/\/|\.com|\.vn|\.net|\.org)/i;
+        var CARD_EMAIL_RX = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+        var CARD_PHONE_RX = /(\+?84|0)[\s.\-()]*(\d[\s.\-()]*){8,10}/;
+
+        function cardCleanPhone(raw) {
+            var d = String(raw || '').replace(/[^\d+]/g, '');
+            if (d.indexOf('+84') === 0) d = '0' + d.slice(3);
+            else if (d.indexOf('84') === 0 && d.length >= 11) d = '0' + d.slice(2);
+            return /^0\d{9,10}$/.test(d) ? d : '';
+        }
+        function cardLooksLikeName(line) {
+            if (/\d|@/.test(line)) return false;
+            var words = line.trim().split(/\s+/);
+            if (words.length < 2 || words.length > 6) return false;
+            if (!/^[A-Za-zÀ-ỹĐđ\s.'-]+$/.test(line)) return false;
+            return !CARD_TITLE_RX.test(line) && !CARD_CO_STRONG_RX.test(line) && !CARD_CO_WEAK_RX.test(line) && !CARD_ADDR_RX.test(line) && !CARD_WEB_RX.test(line);
+        }
+        function parseCardText(text) {
+            var out = { name: '', company: '', jobTitle: '', phone: '', email: '' };
+            // Tách cả dòng gộp kiểu "TÊN | Chức vụ"
+            var lines = String(text || '').split(/\n+|\s[|•·]\s/).map(function (s) { return s.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+
+            var em = String(text || '').match(CARD_EMAIL_RX);
+            if (em) out.email = em[0].toLowerCase();
+
+            var phones = [];
+            lines.forEach(function (line) {
+                var m = line.match(CARD_PHONE_RX);
+                if (!m) return;
+                var p = cardCleanPhone(m[0]);
+                if (!p) return;
+                phones.push({ p: p, labeled: /(^|\W)(m|mob(ile)?|dđ|di động|hp|cell|phone|tel|đt|sđt)\b/i.test(line), mobile: /^0[35789]/.test(p) });
+            });
+            var best = null;
+            phones.forEach(function (x) {
+                if (!best) { best = x; return; }
+                var rank = function (v) { return (v.labeled && v.mobile) ? 0 : v.mobile ? 1 : v.labeled ? 2 : 3; };
+                if (rank(x) < rank(best)) best = x;
+            });
+            if (best) out.phone = best.p;
+
+            var nameCandidates = [];
+            lines.forEach(function (line, i) {
+                var noLabel = line.replace(/^(e(mail)?|w(ebsite)?|m|tel|a(dd)?)\s*[:.]\s*/i, '');
+                var isTitle = CARD_TITLE_RX.test(line) && !CARD_CO_STRONG_RX.test(line) && line.length < 60;
+                var isCompany = (CARD_CO_STRONG_RX.test(line) || (CARD_CO_WEAK_RX.test(line) && !isTitle)) && !CARD_EMAIL_RX.test(line) && !CARD_WEB_RX.test(noLabel);
+                if (!out.company && isCompany) out.company = line.replace(/^,+|,+$/g, '');
+                if (!out.jobTitle && isTitle) out.jobTitle = line;
+                if (cardLooksLikeName(line)) nameCandidates.push({ line: line, i: i });
+            });
+            if (nameCandidates.length) {
+                var ti = out.jobTitle ? lines.indexOf(out.jobTitle) : -1;
+                nameCandidates.sort(function (a, b) {
+                    var adj = function (c) { return (ti >= 0 && Math.abs(c.i - ti) === 1) ? 0 : 1; };
+                    var caps = function (c) { return c.line === c.line.toUpperCase() ? 0 : 1; };
+                    return adj(a) - adj(b) || caps(a) - caps(b) || a.i - b.i;
+                });
+                out.name = nameCandidates[0].line;
+            }
+            return out;
+        }
+        function parseVCard(str) {
+            if (!/BEGIN:VCARD/i.test(str)) return null;
+            var get = function (rx) { var m = String(str).match(rx); return m ? m[1].trim() : ''; };
+            var unesc = function (s) { return s.replace(/\\([,;])/g, '$1'); };
+            var out = {
+                name: unesc(get(/^FN[^:]*:(.+)$/mi)),
+                company: unesc(get(/^ORG[^:]*:([^;\r\n]+)/mi)),
+                jobTitle: unesc(get(/^TITLE[^:]*:(.+)$/mi)),
+                email: get(/^EMAIL[^:]*:(.+)$/mi).toLowerCase(),
+                phone: cardCleanPhone(get(/^TEL[^:]*:(.+)$/mi))
+            };
+            if (!out.name) {
+                var n = get(/^N[^:]*:(.+)$/mi).split(';');
+                out.name = [n[1], n[0]].filter(Boolean).join(' ').trim();
+            }
+            return out;
+        }
+        function matchJobTitle(t) {
+            var norm = function (s) { return String(s).toLowerCase().replace(/\s+/g, ' ').trim(); };
+            var nt = norm(t), bestItem = '', bestLen = 0;
+            JOB_TITLES.forEach(function (g) {
+                g.items.forEach(function (item) {
+                    var ni = norm(item.replace(/\s*\(.*\)$/, ''));
+                    if ((ni === nt || nt.indexOf(ni) !== -1 || ni.indexOf(nt) !== -1) && ni.length > bestLen) { bestLen = ni.length; bestItem = item; }
+                });
+            });
+            return bestItem;
+        }
+        var _scriptPromises = {};
+        function loadScriptOnce(src) {
+            if (!_scriptPromises[src]) _scriptPromises[src] = new Promise(function (resolve, reject) {
+                var s = document.createElement('script');
+                s.src = src;
+                s.onload = resolve;
+                s.onerror = function () { delete _scriptPromises[src]; reject(new Error('không tải được ' + src)); };
+                document.head.appendChild(s);
+            });
+            return _scriptPromises[src];
+        }
+        function cardPhotoToCanvas(file, maxDim) {
+            return new Promise(function (resolve, reject) {
+                var url = URL.createObjectURL(file);
+                var img = new Image();
+                img.onload = function () {
+                    var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+                    var c = document.createElement('canvas');
+                    c.width = Math.round(img.width * scale);
+                    c.height = Math.round(img.height * scale);
+                    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                    URL.revokeObjectURL(url);
+                    resolve(c);
+                };
+                img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('không đọc được ảnh')); };
+                img.src = url;
+            });
+        }
+        var _ocrWorkerPromise = null, _ocrProgressCb = null;
+        function getOcrWorker(onProgress) {
+            _ocrProgressCb = onProgress || null;
+            if (!_ocrWorkerPromise) {
+                _ocrWorkerPromise = loadScriptOnce('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js').then(function () {
+                    return Tesseract.createWorker('vie+eng', 1, {
+                        logger: function (m) { if (m.status === 'recognizing text' && _ocrProgressCb) _ocrProgressCb(Math.round(m.progress * 100)); }
+                    });
+                }).catch(function (e) { _ocrWorkerPromise = null; throw e; });
+            }
+            return _ocrWorkerPromise;
+        }
+        // ===== END QUÉT NAME CARD =====
+
         const CLASSES = {
             SQL: { label: "SQL Lead", emoji: "🟢", color: "bg-green-600",  desc: "Có tín hiệu mua thật & nhu cầu khớp Smartlog — chuyển Sales xử lý ngay." },
             MQL: { label: "MQL Lead", emoji: "🟡", color: "bg-yellow-500", desc: "Đúng tệp, có tiềm năng nhưng chưa đủ điều kiện SQL — MKT nuôi dưỡng." },
@@ -358,6 +495,77 @@
                 else { other.classList.add('hidden'); }
             },
 
+            scanCard() {
+                var inp = document.getElementById('f_card_file');
+                if (inp) inp.click();
+            },
+
+            async onCardPhoto(ev) {
+                var file = ev.target.files && ev.target.files[0];
+                ev.target.value = '';
+                if (!file) return;
+                var st = document.getElementById('card_scan_status');
+                var show = function (msg, cls) {
+                    if (!st) return;
+                    st.className = 'text-[12px] mt-1.5 ' + (cls || 'text-gray-500');
+                    st.textContent = msg;
+                };
+                try {
+                    show('Đang đọc ảnh…');
+                    var canvas = await cardPhotoToCanvas(file, 1600);
+                    var fields = null;
+                    // 1) Thử QR vCard trước: nhanh, chính xác tuyệt đối (card có in QR danh bạ)
+                    try {
+                        await loadScriptOnce('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
+                        var ctx = canvas.getContext('2d');
+                        var qr = jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+                        if (qr && qr.data) fields = parseVCard(qr.data);
+                    } catch (e) { /* không có jsQR vẫn OCR được */ }
+                    // 2) Không có QR → OCR toàn card rồi tách field
+                    if (!fields) {
+                        show('Đang tải bộ nhận dạng chữ (lần đầu hơi lâu, các lần sau nhanh)…');
+                        var worker = await getOcrWorker(function (p) { show('Đang nhận dạng chữ… ' + p + '%'); });
+                        var res = await worker.recognize(canvas);
+                        fields = parseCardText(res && res.data && res.data.text || '');
+                    }
+                    var n = this.fillCardFields(fields);
+                    if (n > 0) show('✓ Đã điền ' + n + ' trường từ card — kiểm tra lại rồi bấm tiếp.', 'text-green-700 font-semibold');
+                    else show('Không tách được thông tin từ ảnh — chụp thẳng, gần hơn, đủ sáng rồi thử lại, hoặc nhập tay.', 'text-red-600');
+                } catch (err) {
+                    show('Không quét được: ' + (err && err.message || err) + ' — nhập tay hoặc dùng "Quét văn bản" của iPhone.', 'text-red-600');
+                }
+            },
+
+            /** Chỉ điền vào ô ĐANG TRỐNG (không đè chữ sale đã gõ); highlight vàng ô vừa điền. Trả về số ô đã điền. */
+            fillCardFields(f) {
+                if (!f) return 0;
+                var n = 0;
+                var map = { name: 'f_name', company: 'f_company', phone: 'f_phone', email: 'f_email' };
+                for (var k in map) {
+                    var el = document.getElementById(map[k]);
+                    if (!el || !f[k] || (el.value && el.value.trim())) continue;
+                    el.value = f[k];
+                    el.classList.add('ring-2', 'ring-amber-400', 'bg-amber-50');
+                    state.formData[k] = f[k];
+                    n++;
+                }
+                if (f.jobTitle) {
+                    var sel = document.getElementById('f_job');
+                    var hint = document.getElementById('f_job_hint');
+                    var matched = matchJobTitle(f.jobTitle);
+                    if (sel && matched && !sel.value) {
+                        sel.value = matched;
+                        state.formData.jobTitle = matched;
+                        sel.classList.add('ring-2', 'ring-amber-400');
+                        n++;
+                    } else if (hint) {
+                        hint.textContent = 'Chức vụ trên card: "' + f.jobTitle + '" — chọn mục gần nhất trong danh sách.';
+                        hint.classList.remove('hidden');
+                    }
+                }
+                return n;
+            },
+
             handleAnswer(questionId, optionIndex, isMulti) {
                 if (isMulti) {
                     let cur = state.answers[questionId] || [];
@@ -454,6 +662,12 @@
                         <p class="text-[17px] text-gray-600 mb-6">Nhập thông tin khách hàng sau khi tư vấn để hệ thống phân loại <strong>Raw / MQL / SQL</strong>. <span class="text-gray-500">Các trường không bắt buộc — lấy được thông tin nào điền thông tin đó.</span></p>
                         ${this.getBackupBoxHTML()}
                         <form onsubmit="app.handleInfoSubmit(event)" class="space-y-5">
+                            <div>
+                                <button type="button" onclick="app.scanCard()" class="w-full flex items-center justify-center gap-2 border-2 border-dashed border-primary/40 text-primary rounded-xl p-3 font-bold text-[15px] bg-bg-box/50 active:bg-bg-box transition">📷 Quét name card để điền nhanh</button>
+                                <input type="file" id="f_card_file" accept="image/*" capture="environment" class="hidden" onchange="app.onCardPhoto(event)" />
+                                <div id="card_scan_status" class="hidden"></div>
+                                <p class="text-[11px] text-gray-400 mt-1.5">💡 iPhone: có thể chạm vào từng ô nhập rồi chọn <strong>"Quét văn bản"</strong> trên bàn phím để quét trực tiếp từng dòng trên card.</p>
+                            </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <div><label class="block text-sm font-semibold mb-1 text-text">Họ và Tên</label><input type="text" id="f_name" value="${state.formData.name}" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" /></div>
                                 <div><label class="block text-sm font-semibold mb-1 text-text">Công ty</label><input type="text" id="f_company" value="${state.formData.company}" class="w-full p-3 border rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary outline-none transition" /></div>
@@ -466,6 +680,7 @@
                                     <option value="">-- Chọn chức vụ --</option>
                                     ${jobsOptions}
                                 </select>
+                                <div id="f_job_hint" class="hidden text-[12px] text-amber-700 mt-1"></div>
                             </div>
                             <div>
                                 <label class="block text-sm font-semibold mb-1 text-text">Người phụ trách (PIC)</label>
