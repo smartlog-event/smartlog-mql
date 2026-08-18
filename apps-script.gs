@@ -2,22 +2,26 @@
  * Smartlog — webhook GỘP cho CẢ 2 trang (MQL lead + Global contact form).
  * CHỈ ĐƯỢC CÓ 1 doPost trong project này. Dán 2 script rời vào cùng project → đè nhau → lead ghi sai tab.
  *
- * Bản 2026-08-19: bộ điểm V2 — thêm 3 cột câu quy mô mới (Câu 11/12/13, answers liền mạch O..Y)
- *   + 2 cột "Điểm SQL" (Z) và "Cần kiểm tra thủ công" (AA). Payload cũ không có scores.sql → ô Z để trống.
+ * Bản 2026-08-20: bộ điểm V2 + câu hỏi sản phẩm COS/SSCP/SGTM.
+ *   - 15 cột câu trả lời liền mạch O..AC (Câu 2..9, 11..13 quy mô, 14..17 ghi nhận sản phẩm)
+ *   - 2 cột cuối: "Điểm SQL" (AD) và "Cần kiểm tra thủ công" (AE). Payload cũ không có scores.sql → ô để trống.
  * Bản 2026-08-03: thêm cột câu trả lời + đổi appendRow thành UPSERT.
  *   - Khớp dòng đã có theo cột "Thời gian" (data.date), dự phòng Họ tên + SĐT + Điểm %.
  *   - Chỉ ghi vào ô ĐANG TRỐNG → không bao giờ đè dữ liệu đã có, đẩy lại bao nhiêu lần cũng không sinh dòng trùng.
  *   - Nhờ vậy nút "↑ Đẩy lại lên Sheet" / recover.js dùng được để bơm câu trả lời cho lead cũ.
  * Sau khi dán: Deploy → Manage deployments → Edit → New version (KHÔNG tạo deployment mới, URL phải giữ nguyên).
+ * ⚠️ Trước khi deploy, kiểm tra ô Z1 của tab Raw/MQL/SQL: nếu Z1 = "Điểm SQL" (đã lỡ chạy bản 27 cột 2026-08-19)
+ *   thì phải sửa tay: dời header + dữ liệu 2 cột Z/AA sang AD/AE rồi xoá trống Z..AC, sau đó mới deploy bản này.
+ *   Nếu Z1 trống (đang chạy bản 22 cột cũ) thì dán thẳng, header tự bổ sung.
  */
 
 var SHEET_ID = "1WxJY6AZ0mjpqWU-kfEW743IgjHU3qq6hD3y8JVC8FZk";
 
 var MQL_TAB = "Raw/MQL/SQL";
 var MQL_BASE_HEADERS = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"];
-// Câu 1 = sản phẩm (đã có cột J), Câu 10 = phù hợp nhu cầu (đã có cột K) → chỉ cần thêm câu 2..9 + 11..13.
-var MQL_ANSWER_HEADERS = ["Câu 2: Số xe","Câu 3: Diện tích kho","Câu 4: Số đơn hàng/tháng","Câu 5: Hệ thống hiện tại","Câu 6: Mức độ cấp bách","Câu 7: Ngân sách","Câu 8: Đã từng triển khai","Câu 9: Tiêu chí chọn","Câu 11: Số container/tháng (COS)","Câu 12: Quy mô mạng lưới SC (SSCP)","Câu 13: Số lô hàng quốc tế/tháng (SGTM)"];
-var MQL_ANSWER_IDS = ["2","3","4","5","6","7","8","9","11","12","13"];
+// Câu 1 = sản phẩm (đã có cột J), Câu 10 = phù hợp nhu cầu (đã có cột K) → thêm câu 2..9, 11..13 (quy mô) + 14..17 (ghi nhận theo sản phẩm, không tính điểm).
+var MQL_ANSWER_HEADERS = ["Câu 2: Số xe","Câu 3: Diện tích kho","Câu 4: Số đơn hàng/tháng","Câu 5: Hệ thống hiện tại","Câu 6: Mức độ cấp bách","Câu 7: Ngân sách","Câu 8: Đã từng triển khai","Câu 9: Tiêu chí chọn","Câu 11: Số container/tháng (COS)","Câu 12: Số điểm kho/phân phối (SSCP)","Câu 13: Số lô hàng XNK/tháng (SGTM)","Câu 14: Vai trò chuỗi container (COS)","Câu 15: Hãng tàu đang làm việc (COS)","Câu 16: Nhu cầu XNK (SGTM)","Câu 17: Nhu cầu planning (SSCP)"];
+var MQL_ANSWER_IDS = ["2","3","4","5","6","7","8","9","11","12","13","14","15","16","17"];
 var MQL_EXTRA_HEADERS = ["Điểm SQL","Cần kiểm tra thủ công"];
 var MQL_HEADERS = MQL_BASE_HEADERS.concat(MQL_ANSWER_HEADERS, MQL_EXTRA_HEADERS);
 
