@@ -53,12 +53,13 @@
         ];
 
         // Đổi mỗi lần sửa logic gửi lead. Hiện trên trang để CBD biết mình có đang mở bản cũ bị cache không.
-        const BUILD = "2026-08-03b";
+        const BUILD = "2026-08-19a";
         const PIC_LIST = ["Kim Kiều","Khanh Trần","Khánh Linh Nguyễn","Thảo Nguyên","Trinh Vũ","Thanh Bình Nguyễn","Sơ Thảo","Tuyển Đào"];
 
-        // Câu 1 = bộ chọn sản phẩm (định tuyến, KHÔNG tính điểm).
-        // requiresProduct: câu quy mô chỉ hiện & tính điểm khi sản phẩm tương ứng được chọn.
-        // Câu không có requiresProduct/gate/router = câu CHUNG, luôn tính cho mọi lead.
+        // ===== SCORING ENGINE V2 (pure, no DOM) =====
+        // Câu 1 = bộ chọn sản phẩm (định tuyến). requiresProduct: câu quy mô chỉ hiện khi
+        // sản phẩm tương ứng được chọn. Câu không có requiresProduct/gate/router = câu CHUNG.
+        // Điểm KHÔNG lấy từ option.score (legacy, chỉ dùng cho style) mà theo INDEX đáp án — xem bảng dưới.
         const QUESTIONS = [
             {
                 id: 1, router: true, type: 'multiple',
@@ -88,6 +89,18 @@
                 options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Dưới 500 đơn/tháng", score: 2 }, { text: "500 – 2.000 đơn/tháng", score: 4 }, { text: "2.000 – 10.000 đơn/tháng", score: 6 }, { text: "Trên 10.000 đơn/tháng", score: 8 } ]
             },
             {
+                id: 11, requiresProduct: "COS", type: 'single', text: "Sản lượng container xuất/nhập trung bình mỗi tháng? (chỉ hỏi khi quan tâm COS)",
+                options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Dưới 50 container/tháng", score: 4 }, { text: "50 – 200 container/tháng", score: 12 }, { text: "200 – 500 container/tháng", score: 18 }, { text: "Trên 500 container/tháng", score: 25 } ]
+            },
+            {
+                id: 12, requiresProduct: "SSCP", type: 'single', text: "Quy mô mạng lưới chuỗi cung ứng (tổng số nhà máy + kho + điểm phân phối)? (chỉ hỏi khi quan tâm SSCP)",
+                options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Dưới 3 điểm", score: 4 }, { text: "3 – 10 điểm", score: 12 }, { text: "11 – 30 điểm", score: 18 }, { text: "Trên 30 điểm", score: 25 } ]
+            },
+            {
+                id: 13, requiresProduct: "SGTM", type: 'single', text: "Sản lượng lô hàng vận tải quốc tế mỗi tháng? (chỉ hỏi khi quan tâm SGTM)",
+                options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Dưới 20 lô/tháng", score: 4 }, { text: "20 – 100 lô/tháng", score: 12 }, { text: "100 – 500 lô/tháng", score: 18 }, { text: "Trên 500 lô/tháng", score: 25 } ]
+            },
+            {
                 id: 5, type: 'single', text: "Doanh nghiệp hiện đang dùng hệ thống/công cụ nào để quản lý vận hành?",
                 options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Excel hoặc quản lý thủ công hoàn toàn", score: 2 }, { text: "Phần mềm nội bộ tự phát triển", score: 4 }, { text: "Phần mềm của một đơn vị khác (không phải Smartlog)", score: 6 }, { text: "Đang dùng một phần giải pháp Smartlog và muốn mở rộng", score: 7 } ]
             },
@@ -113,8 +126,113 @@
             }
         ];
 
-        const THRESHOLDS = { SQL: 70, MQL: 45 }; // theo % điểm phù hợp: ≥70% → SQL, ≥45% → MQL
-        const STRONG_TAGS = ["URGENT_CALL", "DIRECT_PROPOSAL"]; // luật đẩy độc lập: có tag này → đủ tầm SQL
+        // Sản phẩm → id câu quy mô. STX & SGP chưa có ngưỡng quy mô → không map (k không tính).
+        const SCALE_MAP = { STM: 2, SWM: 3, SOM: 4, COS: 11, SSCP: 12, SGTM: 13 };
+        // Bảng điểm V2 theo INDEX đáp án (index 0 = "Chưa lấy được thông tin")
+        const SCALE_POINTS = [0, 4, 12, 18, 25];               // mọi câu quy mô (Q2/3/4/11/12/13)
+        const COMMON_POINTS = { 5: [0, 4, 6, 8, 10], 6: [0, 4, 10, 16, 20], 7: [0, 2, 10, 16, 20], 8: [0, 2, 6, 8, 10], 9: [0, 2, 3, 4, 4, 5] };
+        const THRESHOLDS = { SQL: 70, MQL: 45 }; // chỉ để hiển thị ngưỡng trên UI — nguồn quyết định duy nhất là scoreLeadV2
+
+        // answers = {qid: index | [index]} (như rawAnswers). opts = { bookedMeeting: bool, scaleMap?: object }
+        function scoreLeadV2(answers, opts) {
+            opts = opts || {};
+            var scaleMap = opts.scaleMap || SCALE_MAP;
+            var router = QUESTIONS.filter(function (q) { return q.router; })[0];
+
+            function toIdx(v) {
+                if (v === undefined || v === null || v === '') return null;
+                if (Array.isArray(v)) return v.length ? v[0] : null;
+                return v;
+            }
+            function optTag(qid, idx) {
+                var q = QUESTIONS.filter(function (x) { return x.id === qid; })[0];
+                var o = q && q.options[idx];
+                return (o && o.tag) ? o.tag : null;
+            }
+
+            var a1 = answers[1];
+            var idxs1 = Array.isArray(a1) ? a1 : (a1 === undefined || a1 === null || a1 === '' ? [] : [a1]);
+            var tags = [], productTags = [];
+            idxs1.forEach(function (i) { var o = router.options[i]; if (o && o.tag) { tags.push(o.tag); productTags.push(o.tag); } });
+            var products = productTags.filter(function (t) { return t !== 'UNCLEAR'; });
+
+            // Q1: 10 điểm nếu có ≥1 sản phẩm cụ thể (tối đa 10 dù chọn nhiều)
+            var c1 = products.length >= 1 ? 10 : 0;
+
+            // Câu quy mô của các sản phẩm ĐÃ CHỌN có trong scaleMap (SP không chọn: không vào mẫu số)
+            var scaleQs = [];
+            products.forEach(function (p) {
+                if (scaleMap[p] != null) scaleQs.push({ product: p, qid: scaleMap[p], idx: toIdx(answers[scaleMap[p]]) });
+            });
+            var k = scaleQs.length;
+            var scaleSum = 0;
+            scaleQs.forEach(function (s) { s.pts = s.idx != null ? (SCALE_POINTS[s.idx] || 0) : 0; scaleSum += s.pts; });
+
+            var ci = {}, cp = {};
+            [5, 6, 7, 8, 9].forEach(function (qid) {
+                ci[qid] = toIdx(answers[qid]);
+                cp[qid] = ci[qid] != null ? (COMMON_POINTS[qid][ci[qid]] || 0) : 0;
+            });
+
+            // Action tags từ C6/C7/C9 + cross-sell (cơ chế cũ)
+            [6, 7, 9].forEach(function (qid) {
+                if (ci[qid] != null && ci[qid] > 0) { var t = optTag(qid, ci[qid]); if (t) tags.push(t); }
+            });
+            if (products.length >= 3) tags.push('CROSS_SELL_OPPORTUNITY');
+
+            var achievedMQL = c1 + scaleSum + cp[5] + cp[6] + cp[8] + cp[9]; // KHÔNG gồm C7
+            var maxMQL = 55 + 25 * k;
+            var mqlScore = Math.round(achievedMQL * 100 / maxMQL);
+            var sqlScore = Math.round((achievedMQL + cp[7]) * 100 / (maxMQL + 20));
+
+            // Độ đầy đủ: câu áp dụng MQL = C1 + câu quy mô của SP đã chọn + C5/C6/C8/C9
+            var appliedMQL = 1 + k + 4;
+            var filledMQL = (products.length >= 1 ? 1 : 0);
+            scaleQs.forEach(function (s) { if (s.idx != null && s.idx > 0) filledMQL++; });
+            [5, 6, 8, 9].forEach(function (qid) { if (ci[qid] != null && ci[qid] > 0) filledMQL++; });
+            var fillMQL = filledMQL / appliedMQL;
+            var fillSQL = (filledMQL + (ci[7] != null && ci[7] > 0 ? 1 : 0)) / (appliedMQL + 1);
+
+            // 5 cổng MQL — trượt 1 cổng bất kỳ → Raw
+            var gates = {
+                product: products.length >= 1,
+                need: (ci[5] != null && ci[5] > 0) || (ci[6] != null && ci[6] > 0) || (ci[8] != null && ci[8] > 0),
+                scale: k >= 1 && scaleQs.some(function (s) { return s.idx != null && s.idx >= 2; }),
+                score: mqlScore >= 45,
+                fill: fillMQL >= 0.5
+            };
+            var isMQL = gates.product && gates.need && gates.scale && gates.score && gates.fill;
+
+            // Điều kiện SQL (chỉ xét khi đã đạt cả 5 cổng MQL)
+            var budgetGate = ci[7] != null && ci[7] >= 2;
+            var strongSignal = scaleQs.some(function (s) { return s.idx != null && s.idx >= 3; })
+                || (ci[6] != null && ci[6] >= 3) || (ci[7] != null && ci[7] >= 3);
+            var isSQL = isMQL && sqlScore >= THRESHOLDS.SQL && budgetGate && fillSQL >= 0.7 && strongSignal;
+
+            var classification = isSQL ? 'SQL' : (isMQL ? 'MQL' : 'Raw');
+
+            // SP cụ thể nhưng không SP nào có ngưỡng quy mô (chỉ STX/SGP) → giữ Raw, cần review tay
+            var manualCheck = products.length >= 1 && k === 0;
+            if (manualCheck) tags.push('MANUAL_CHECK');
+
+            // Override book meeting: kết quả tối thiểu là MQL (không hạ SQL)
+            var overridden = false;
+            if (opts.bookedMeeting && classification === 'Raw') {
+                classification = 'MQL';
+                overridden = true;
+                tags.push('MQL_OVERRIDE_BOOKMEETING');
+            }
+
+            return {
+                classification: classification, mqlScore: mqlScore, sqlScore: sqlScore,
+                achievedMQL: achievedMQL, maxMQL: maxMQL, k: k,
+                gates: gates, fillMQL: fillMQL, fillSQL: fillSQL,
+                budgetGate: budgetGate, strongSignal: strongSignal,
+                manualCheck: manualCheck, overridden: overridden,
+                tags: tags, products: products
+            };
+        }
+        // ===== END SCORING ENGINE V2 =====
 
         const CLASSES = {
             SQL: { label: "SQL Lead", emoji: "🟢", color: "bg-green-600",  desc: "Có tín hiệu mua thật & nhu cầu khớp Smartlog — chuyển Sales xử lý ngay." },
@@ -122,11 +240,6 @@
             Raw: { label: "Raw Lead", emoji: "⚪", color: "bg-gray-400",   desc: "Chưa đủ tín hiệu — lưu trữ & nurture chung." }
         };
 
-        // Điểm tối đa của 1 câu tính điểm
-        function questionMax(q) {
-            if (q.type === 'multiple') return Math.min(q.options.reduce((s, o) => s + (o.score || 0), 0), q.cap || 15);
-            return Math.max.apply(null, q.options.map(o => o.score || 0));
-        }
         // Các tag sản phẩm đã chọn ở câu định tuyến
         function selectedProductTags() {
             const ans = state.answers[1];
@@ -185,12 +298,12 @@
             exportBackup() {
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào lưu trên máy này.'); return; }
-                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"]
+                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Điểm SQL","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"]
                     .concat(QUESTIONS.map(function (q) { return "Câu " + q.id + ": " + q.text; }))
                     .concat(["rawAnswers (JSON gốc)"]);
                 var rows = arr.map(function (r) {
                     var c = r.customer || {}, s = r.scores || {}, ra = r.rawAnswers || {};
-                    var row = [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""];
+                    var row = [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (s.sql!=null?s.sql:""), (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""];
                     QUESTIONS.forEach(function (q) { row.push(answerToText(q, ra[q.id])); });
                     row.push(JSON.stringify(ra));
                     return row;
@@ -274,56 +387,28 @@
             prevStep() { if (state.surveyStep > 0) state.surveyStep--; this.render(); },
 
             calculateResults() {
-                const active = getActiveQuestions();
-                let earned = 0, maxApplicable = 0;
-                let tags = [], productTags = [], fit = null;
+                // Toàn bộ chấm điểm & phân loại nằm trong scoreLeadV2 (engine V2, pure)
+                const v2 = scoreLeadV2(state.answers, { bookedMeeting: state.formData.bookedMeeting });
 
-                active.forEach(q => {
-                    const answer = state.answers[q.id];
-                    if (q.router) {
-                        if (Array.isArray(answer)) answer.forEach(i => { const o = q.options[i]; if (o && o.tag) { tags.push(o.tag); productTags.push(o.tag); } });
-                        return;
-                    }
-                    if (q.gate) {
-                        if (answer !== undefined) { const o = q.options[answer]; if (o && o.fit) fit = o.fit; }
-                        return;
-                    }
-                    // Câu tính điểm (quy mô theo mảng + câu chung)
-                    maxApplicable += questionMax(q);
-                    if (answer === undefined) return;
-                    if (q.type === 'single') {
-                        const o = q.options[answer]; if (!o) return;
-                        earned += o.score;
-                        if (o.tag) tags.push(o.tag);
-                    } else if (q.type === 'multiple') {
-                        let m = 0; answer.forEach(i => { const o = q.options[i]; m += o.score; if (o.tag) tags.push(o.tag); });
-                        earned += Math.min(m, q.cap || 15);
-                    }
-                });
-
-                const realProducts = productTags.filter(t => t !== 'UNCLEAR');
-                if (realProducts.length >= 3) tags.push("CROSS_SELL_OPPORTUNITY");
-
-                const percent = maxApplicable > 0 ? Math.round(earned / maxApplicable * 100) : 0;
-                const fitPass = (fit === "Phù hợp");
-                // SQL nếu ĐIỂM ≥ 70% HOẶC nhu cầu "Phù hợp" (vượt bậc). Còn lại chia MQL/Raw theo %.
-                let classification;
-                if (percent >= THRESHOLDS.SQL || fitPass) classification = "SQL";
-                else if (percent >= THRESHOLDS.MQL) classification = "MQL";
-                else classification = "Raw";
-                const sqlByFit = classification === "SQL" && fitPass && percent < THRESHOLDS.SQL; // lên SQL nhờ "Phù hợp" (vượt bậc)
+                // Câu 10 (fit) chỉ ghi nhận — không tham gia điểm/phân loại
+                let fit = null;
+                const gateQ = QUESTIONS.find(q => q.gate);
+                const gateAns = state.answers[gateQ.id];
+                if (gateAns !== undefined) { const o = gateQ.options[gateAns]; if (o && o.fit) fit = o.fit; }
 
                 return {
                     date: new Date().toISOString(),
                     customer: state.formData,
                     rawAnswers: state.answers,
                     answersText: answersAsText(state.answers),
-                    products: productTags,
-                    scores: { earned: earned, max: maxApplicable, percent: percent },
-                    tags: tags,
+                    products: selectedProductTags(),
+                    scores: { earned: v2.achievedMQL, max: v2.maxMQL, percent: v2.mqlScore, mql: v2.mqlScore, sql: v2.sqlScore },
+                    tags: v2.tags,
                     fit: fit,
-                    classification: classification,
-                    sqlByFit: sqlByFit
+                    classification: v2.classification,
+                    manualCheck: v2.manualCheck,
+                    overridden: v2.overridden,
+                    v2: v2
                 };
             },
 
@@ -440,23 +525,59 @@
 
             getResultHTML() {
                 const r = state.lastResult;
+                const v = r.v2 || {};
+                const g = v.gates || {};
                 const c = CLASSES[r.classification];
                 const prodHTML = (r.products || []).filter(t => t !== 'UNCLEAR').map(t => `<span class="px-2.5 py-1 bg-blue-50 text-primary border border-blue-100 rounded-lg text-xs font-bold">${t}</span>`).join('');
+                const check = ok => ok
+                    ? '<span class="w-5 h-5 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 text-xs font-black">✓</span>'
+                    : '<span class="w-5 h-5 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0 text-xs font-black">✗</span>';
+                const rowHTML = rows => rows.map(([label, ok]) => `<div class="flex items-center gap-2 py-1">${check(ok)}<span class="text-[13px] ${ok ? 'text-gray-700' : 'text-gray-400'}">${label}</span></div>`).join('');
+                const mqlRows = rowHTML([
+                    ['Có ≥1 sản phẩm cụ thể', g.product],
+                    ['Có tín hiệu nhu cầu (C5/C6/C8)', g.need],
+                    ['Quy mô đạt mức B trở lên', g.scale],
+                    [`Điểm MQL ≥ ${THRESHOLDS.MQL}`, g.score],
+                    ['Đủ thông tin ≥ 50%', g.fill]
+                ]);
+                const sqlRows = rowHTML([
+                    [`Điểm SQL ≥ ${THRESHOLDS.SQL}`, (v.sqlScore || 0) >= THRESHOLDS.SQL],
+                    ['Cổng ngân sách (C7 từ mức "đang xét duyệt")', v.budgetGate],
+                    ['Có tín hiệu mạnh C+ (quy mô/C6/C7)', v.strongSignal],
+                    ['Đủ thông tin ≥ 70% (kèm C7)', (v.fillSQL || 0) >= 0.7]
+                ]);
                 return `
                 <div class="flex-grow flex items-center justify-center p-4 bg-primary overflow-y-auto">
-                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 md:p-10 relative overflow-hidden my-auto text-center">
+                    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 md:p-8 relative overflow-hidden my-auto">
                         <div class="absolute top-0 left-0 w-full h-2 bg-highlight"></div>
                         <div class="flex items-center justify-center gap-1.5 text-green-600 text-sm font-semibold mb-4"><i data-lucide="check" class="w-4 h-4"></i> Đã lưu lead</div>
-                        <div class="mb-5"><div class="text-xl font-bold text-gray-800">${r.customer.name || 'Khách hàng'}</div>${r.customer.company ? `<div class="text-sm text-gray-500 mt-0.5">${r.customer.company}</div>` : ''}${r.customer.pic ? `<div class="text-xs text-gray-400 mt-1">PIC: ${r.customer.pic}</div>` : ''}</div>
+                        <div class="mb-4 text-center"><div class="text-xl font-bold text-gray-800">${r.customer.name || 'Khách hàng'}</div>${r.customer.company ? `<div class="text-sm text-gray-500 mt-0.5">${r.customer.company}</div>` : ''}${r.customer.pic ? `<div class="text-xs text-gray-400 mt-1">PIC: ${r.customer.pic}</div>` : ''}</div>
                         <div class="flex justify-center mb-4">
-                            <div class="px-8 py-4 rounded-2xl ${c.color} text-white shadow-lg"><div class="text-3xl font-black tracking-tight">${c.emoji} ${c.label}</div></div>
+                            <div class="px-8 py-3.5 rounded-2xl ${c.color} text-white shadow-lg"><div class="text-2xl font-black tracking-tight">${c.emoji} ${c.label}</div></div>
                         </div>
-                        ${r.sqlByFit ? `<p class="text-xs text-highlight font-bold mb-4">⭐ Vượt bậc lên SQL nhờ nhu cầu "Phù hợp"</p>` : ''}
-                        <div class="mb-5">
-                            <div class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Điểm phù hợp</div>
-                            <div class="text-5xl font-black text-primary leading-none mt-1">${r.scores.percent}<span class="text-2xl text-gray-400 font-normal">%</span></div>
+                        ${r.overridden ? `<p class="text-xs text-highlight font-bold mb-3 text-center">📌 Giữ MQL do đã book meeting</p>` : ''}
+                        ${r.manualCheck ? `<div class="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-4"><p class="text-[13px] text-amber-900">⚠️ Sản phẩm chọn (STX/SGP) chưa có ngưỡng quy mô — ${r.classification === 'Raw' ? 'hệ thống giữ <strong>Raw</strong>, cần review tay.' : 'điểm không tự nâng bậc, cần review tay xác nhận lại.'}</p></div>` : ''}
+                        <div class="grid grid-cols-2 gap-3 mb-4">
+                            <div class="bg-bg-box rounded-xl p-3 text-center">
+                                <div class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Điểm MQL</div>
+                                <div class="text-3xl font-black text-primary leading-none mt-1">${v.mqlScore != null ? v.mqlScore : r.scores.percent}<span class="text-sm text-gray-400 font-normal">/100</span></div>
+                                <div class="text-[11px] text-gray-400 mt-1">ngưỡng ${THRESHOLDS.MQL}</div>
+                            </div>
+                            <div class="bg-bg-box rounded-xl p-3 text-center">
+                                <div class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Điểm SQL</div>
+                                <div class="text-3xl font-black text-primary leading-none mt-1">${v.sqlScore != null ? v.sqlScore : '—'}<span class="text-sm text-gray-400 font-normal">/100</span></div>
+                                <div class="text-[11px] text-gray-400 mt-1">ngưỡng ${THRESHOLDS.SQL}</div>
+                            </div>
                         </div>
-                        ${prodHTML ? `<div class="flex flex-wrap gap-1.5 justify-center mb-6">${prodHTML}</div>` : '<div class="mb-6"></div>'}
+                        <div class="border border-gray-100 rounded-xl p-3 mb-3 text-left">
+                            <p class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">5 cổng MQL</p>
+                            ${mqlRows}
+                        </div>
+                        <div class="border border-gray-100 rounded-xl p-3 mb-4 text-left">
+                            <p class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Điều kiện SQL</p>
+                            ${sqlRows}
+                        </div>
+                        ${prodHTML ? `<div class="flex flex-wrap gap-1.5 justify-center mb-5">${prodHTML}</div>` : ''}
                         <button onclick="window.location.reload()" class="w-full btn-primary text-lg font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg"><i data-lucide="plus"></i> Nhập lead mới</button>
                     </div>
                 </div>`;
