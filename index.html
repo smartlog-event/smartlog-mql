@@ -53,7 +53,7 @@
         ];
 
         // Đổi mỗi lần sửa logic gửi lead. Hiện trên trang để CBD biết mình có đang mở bản cũ bị cache không.
-        const BUILD = "2026-08-20a";
+        const BUILD = "2026-08-20b";
         const PIC_LIST = ["Kim Kiều","Khanh Trần","Khánh Linh Nguyễn","Thảo Nguyên","Trinh Vũ","Thanh Bình Nguyễn","Sơ Thảo","Tuyển Đào"];
 
         // ===== SCORING ENGINE V2 (pure, no DOM) =====
@@ -140,8 +140,9 @@
                 options: [ { text: "Chưa lấy được thông tin", score: 0 }, { text: "Giá cả và chi phí đầu tư", score: 6, tag: "PRICE_SENSITIVE" }, { text: "Tốc độ triển khai nhanh", score: 7, tag: "SPEED_DRIVEN" }, { text: "Khả năng tích hợp với hệ thống hiện có", score: 8, tag: "INTEGRATION_FOCUSED" }, { text: "Năng lực hỗ trợ và dịch vụ sau triển khai", score: 8, tag: "SERVICE_FOCUSED" }, { text: "Khả năng mở rộng theo sự tăng trưởng của doanh nghiệp", score: 10, tag: "SCALE_FOCUSED" } ]
             },
             {
-                id: 10, gate: true, type: 'single', text: "Theo bạn, nhu cầu của khách có phù hợp với giải pháp Smartlog không? (CBD đánh giá — không tính điểm)",
-                options: [ { text: "Phù hợp — nhu cầu khớp rõ với sản phẩm Smartlog", fit: "Phù hợp" }, { text: "Chưa rõ — cần tìm hiểu thêm", fit: "Chưa rõ" }, { text: "Không phù hợp", fit: "Không phù hợp" } ]
+                id: 18, type: 'note', text: "Ghi chú thêm về khách hàng (nếu có — không tính điểm)",
+                placeholder: "Vd: khách hẹn gọi lại tuần sau, đang so sánh với phần mềm khác, quan tâm chi phí triển khai, người quyết định là anh/chị A...",
+                options: []
             }
         ];
 
@@ -319,12 +320,12 @@
             exportBackup() {
                 var arr = []; try { arr = JSON.parse(localStorage.getItem('smartlog_leads_mkt') || '[]'); } catch (e) {}
                 if (!arr.length) { alert('Không có lead nào lưu trên máy này.'); return; }
-                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Điểm SQL","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)"]
+                var head = ["Thời gian","Họ tên","Công ty","SĐT","Email","Chức vụ","Tư vấn 1:1","Book meeting","Điểm %","Điểm SQL","Sản phẩm quan tâm","Phù hợp nhu cầu","Tags","Phân loại","Người phụ trách (PIC)","Ghi chú"]
                     .concat(QUESTIONS.map(function (q) { return "Câu " + q.id + ": " + q.text; }))
                     .concat(["rawAnswers (JSON gốc)"]);
                 var rows = arr.map(function (r) {
                     var c = r.customer || {}, s = r.scores || {}, ra = r.rawAnswers || {};
-                    var row = [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (s.sql!=null?s.sql:""), (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||""];
+                    var row = [r.date||"", c.name||"", c.company||"", c.phone||"", c.email||"", c.jobTitle||"", c.consulted1v1?"x":"", c.bookedMeeting?"x":"", (s.percent!=null?s.percent:0)+"%", (s.sql!=null?s.sql:""), (r.products||[]).join(" | "), r.fit||"", (r.tags||[]).join(" | "), r.classification||"", c.pic||"", r.note||""];
                     QUESTIONS.forEach(function (q) { row.push(answerToText(q, ra[q.id])); });
                     row.push(JSON.stringify(ra));
                     return row;
@@ -403,6 +404,8 @@
                 }
             },
 
+            setNote(v) { state.noteText = v; },
+
             nextStep() { state.surveyStep++; this.render(); },
             prevStep() { if (state.surveyStep > 0) state.surveyStep--; this.render(); },
 
@@ -414,12 +417,6 @@
                 // Toàn bộ chấm điểm & phân loại nằm trong scoreLeadV2 (engine V2, pure)
                 const v2 = scoreLeadV2(answers, { bookedMeeting: state.formData.bookedMeeting });
 
-                // Câu 10 (fit) chỉ ghi nhận — không tham gia điểm/phân loại
-                let fit = null;
-                const gateQ = QUESTIONS.find(q => q.gate);
-                const gateAns = state.answers[gateQ.id];
-                if (gateAns !== undefined) { const o = gateQ.options[gateAns]; if (o && o.fit) fit = o.fit; }
-
                 return {
                     date: new Date().toISOString(),
                     build: BUILD,
@@ -429,7 +426,8 @@
                     products: selectedProductTags(),
                     scores: { earned: v2.achievedMQL, max: v2.maxMQL, percent: v2.mqlScore, mql: v2.mqlScore, sql: v2.sqlScore },
                     tags: v2.tags,
-                    fit: fit,
+                    fit: "",
+                    note: state.noteText || "",
                     classification: v2.classification,
                     manualCheck: v2.manualCheck,
                     overridden: v2.overridden,
@@ -517,7 +515,30 @@
                 </div>`;
             },
 
+            getNoteHTML(q, total) {
+                const progress = (state.surveyStep / total) * 100;
+                return `
+                <div class="flex-grow flex flex-col overflow-hidden">
+                    <div class="w-full bg-gray-200 h-2 shrink-0"><div class="bg-highlight h-2 transition-all duration-500" style="width: ${progress}%"></div></div>
+                    <div class="flex-grow overflow-y-auto bg-gray-50">
+                        <div class="min-h-full flex items-center justify-center p-4">
+                            <div class="max-w-3xl w-full">
+                                <div class="mb-4 text-sm font-bold text-highlight uppercase tracking-wider">Bước cuối · ${state.surveyStep} / ${total}</div>
+                                <h2 class="text-[24px] md:text-[30px] font-bold text-text mb-6 leading-tight bg-white p-5 md:p-8 rounded-2xl shadow-sm border border-gray-100">${q.text}</h2>
+                                <textarea id="f_note" rows="5" oninput="app.setNote(this.value)" placeholder="${q.placeholder || ''}" class="w-full p-4 rounded-xl border-2 border-gray-200 focus:border-primary outline-none transition text-[16px] bg-white resize-y">${(state.noteText || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</textarea>
+                                <p class="text-[12px] text-gray-400 mt-1.5">Không bắt buộc — có thể bỏ trống rồi bấm Hoàn thành.</p>
+                                <div class="mt-8 flex justify-between items-center">
+                                    <button onclick="app.prevStep()" class="px-6 py-3 rounded-lg font-medium text-gray-600 hover:bg-gray-200 transition flex items-center gap-2"><i data-lucide="chevron-left"></i> Quay lại</button>
+                                    <button onclick="app.submitSurvey()" class="px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition-all btn-primary shadow-md">Hoàn thành <i data-lucide="chevron-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            },
+
             getQuestionHTML(q, total) {
+                if (q.type === 'note') return this.getNoteHTML(q, total);
                 const isMulti = q.type === 'multiple';
                 const currentAnswer = state.answers[q.id];
                 const progress = (state.surveyStep / total) * 100;

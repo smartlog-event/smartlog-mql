@@ -2,9 +2,11 @@
  * Smartlog — webhook GỘP cho CẢ 2 trang (MQL lead + Global contact form).
  * CHỈ ĐƯỢC CÓ 1 doPost trong project này. Dán 2 script rời vào cùng project → đè nhau → lead ghi sai tab.
  *
- * Bản 2026-08-20: bộ điểm V2 + câu hỏi sản phẩm COS/SSCP/SGTM.
+ * Bản 2026-08-20: bộ điểm V2 + câu hỏi sản phẩm COS/SSCP/SGTM + cột Ghi chú (32 cột A..AF).
  *   - 15 cột câu trả lời liền mạch O..AC (Câu 2..9, 11..13 quy mô, 14..17 ghi nhận sản phẩm)
- *   - 2 cột cuối: "Điểm SQL" (AD) và "Cần kiểm tra thủ công" (AE). Payload cũ không có scores.sql → ô để trống.
+ *   - 3 cột cuối: "Điểm SQL" (AD), "Cần kiểm tra thủ công" (AE), "Ghi chú" (AF — thay câu 10 cũ,
+ *     là ô note tự do CBD nhập cuối bài; cột K "Phù hợp nhu cầu" giữ cho dữ liệu cũ, lead mới để trống).
+ *   - Payload cũ không có scores.sql/note → ô để trống.
  * Bản 2026-08-03: thêm cột câu trả lời + đổi appendRow thành UPSERT.
  *   - Khớp dòng đã có theo cột "Thời gian" (data.date), dự phòng Họ tên + SĐT + Điểm %.
  *   - Chỉ ghi vào ô ĐANG TRỐNG → không bao giờ đè dữ liệu đã có, đẩy lại bao nhiêu lần cũng không sinh dòng trùng.
@@ -22,7 +24,7 @@ var MQL_BASE_HEADERS = ["Thời gian","Họ tên","Công ty","SĐT","Email","Ch�
 // Câu 1 = sản phẩm (đã có cột J), Câu 10 = phù hợp nhu cầu (đã có cột K) → thêm câu 2..9, 11..13 (quy mô) + 14..17 (ghi nhận theo sản phẩm, không tính điểm).
 var MQL_ANSWER_HEADERS = ["Câu 2: Số xe","Câu 3: Diện tích kho","Câu 4: Số đơn hàng/tháng","Câu 5: Hệ thống hiện tại","Câu 6: Mức độ cấp bách","Câu 7: Ngân sách","Câu 8: Đã từng triển khai","Câu 9: Tiêu chí chọn","Câu 11: Số container/tháng (COS)","Câu 12: Số điểm kho/phân phối (SSCP)","Câu 13: Số lô hàng XNK/tháng (SGTM)","Câu 14: Vai trò chuỗi container (COS)","Câu 15: Hãng tàu đang làm việc (COS)","Câu 16: Nhu cầu XNK (SGTM)","Câu 17: Nhu cầu planning (SSCP)"];
 var MQL_ANSWER_IDS = ["2","3","4","5","6","7","8","9","11","12","13","14","15","16","17"];
-var MQL_EXTRA_HEADERS = ["Điểm SQL","Cần kiểm tra thủ công"];
+var MQL_EXTRA_HEADERS = ["Điểm SQL","Cần kiểm tra thủ công","Ghi chú"];
 var MQL_HEADERS = MQL_BASE_HEADERS.concat(MQL_ANSWER_HEADERS, MQL_EXTRA_HEADERS);
 
 var COL_NAME = 2, COL_PHONE = 4, COL_PERCENT = 9, COL_PIC = 14;
@@ -64,7 +66,9 @@ function upsertMQLLocked_(data){
   var c = data.customer || {}, s = data.scores || {};
   var answers = data.answersText || {};
   var answerVals = MQL_ANSWER_IDS.map(function(id){ return answers[id] || ""; });
-  var extraVals = [s.sql != null ? s.sql : "", data.manualCheck ? "Có" : ""];
+  var note = String(data.note || "");
+  if (/^[=+@]/.test(note)) note = "'" + note;   // chặn note bắt đầu bằng =/+/@ biến thành công thức trong Sheet
+  var extraVals = [s.sql != null ? s.sql : "", data.manualCheck ? "Có" : "", note];
 
   var row = findMQLRow_(sh, data, c, s);
   if (row) {

@@ -68,7 +68,7 @@
   function buildRows() {
     var Q = getQuestions(), items = collectLeads();
     var head = ["Nguồn (key)", "Thời gian", "Họ tên", "Công ty", "SĐT", "Email", "Chức vụ", "Người phụ trách (PIC)",
-      "Tư vấn 1:1", "Book meeting", "Điểm", "Phân loại", "Sản phẩm quan tâm", "Phù hợp nhu cầu", "Tags"];
+      "Tư vấn 1:1", "Book meeting", "Điểm", "Phân loại", "Sản phẩm quan tâm", "Phù hợp nhu cầu", "Tags", "Ghi chú"];
     Q.forEach(function (q) { head.push("Câu " + q.id + ": " + (q.text || '')); });
     head.push("rawAnswers (JSON gốc)");
 
@@ -78,7 +78,7 @@
       var row = [it.key, r.date || '', c.name || '', c.company || '', c.phone || '', c.email || '', c.jobTitle || '', c.pic || '',
         c.consulted1v1 ? 'x' : '', c.bookedMeeting ? 'x' : '',
         s.percent != null ? s.percent + '%' : (s.total != null ? s.total : ''),
-        r.classification || r.tier || '', (r.products || []).join(' | '), r.fit || '', (r.tags || []).join(' | ')];
+        r.classification || r.tier || '', (r.products || []).join(' | '), r.fit || '', (r.tags || []).join(' | '), r.note || ''];
       Q.forEach(function (q) { row.push(answerText(q, ra[q.id])); });
       row.push(JSON.stringify(ra));
       rows.push(row);
